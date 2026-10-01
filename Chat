@@ -281,7 +281,7 @@ local function EnviarMensaje()
 				chatEvents.SayMessageRequest:FireServer(mensajeFinal, "All")
 			else
 				local textChannels = TextChatService:FindFirstChild("TextChannels")
-				if textChannels me then
+				if textChannels then
 					local general = textChannels:FindFirstChild("RBXGeneral") or textChannels:FindFirstChildOfClass("TextChannel")
 					if general then
 						general:SendAsync(mensajeFinal)
