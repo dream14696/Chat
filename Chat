@@ -1,337 +1,316 @@
 local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local TextChatService = game:GetService("TextChatService")
+local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
 
-local player = Players.LocalPlayer
-local camera = Workspace.CurrentCamera
+local Idiomas = {
+	["Francés"] = "fr",
+	["Inglés"] = "en",
+	["Español"] = "es",
+	["Brasil"] = "pt",
+	["Portugal"] = "pt",
+	["China"] = "zh"
+}
 
--- Obtener el módulo de controles nativo para leer el joystick móvil
-local PlayerModule = require(player:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
-local Controls = PlayerModule:GetControls()
+local idiomaSeleccionado = "en"
 
--- Alojamiento seguro de la GUI (Optimizado para Delta / CoreGui)
-local guiParent = (gethui and gethui()) or game:GetService("CoreGui")
-if not pcall(function() local _ = guiParent.Name end) then
-    guiParent = player:WaitForChild("PlayerGui")
+local function traducirTexto(texto, origen, destino)
+	if not texto or #texto:gsub("%s+", "") == 0 then return "" end
+	
+	local url = "https://api.mymemory.translated.net/get?q=" .. HttpService:UrlEncode(texto) .. "&langpair=" .. origen .. "|" .. destino
+	
+	local exito, respuesta = pcall(function()
+		return game:HttpGet(url)
+	end)
+	
+	if exito and respuesta then
+		local exitoJSON, datos = pcall(function()
+			return HttpService:JSONDecode(respuesta)
+		end)
+		if exitoJSON and datos and datos.responseData and datos.responseData.translatedText then
+			return datos.responseData.translatedText
+		end
+	end
+	return texto
 end
 
-if guiParent:FindFirstChild("FreecamMenu") then
-    guiParent.FreecamMenu:Destroy()
+if CoreGui:FindFirstChild("TraductorChatGUI") then
+	CoreGui.TraductorChatGUI:Destroy()
 end
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "FreecamMenu"
-screenGui.ResetOnSpawn = false
-screenGui.Parent = guiParent
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "TraductorChatGUI"
+ScreenGui.DisplayOrder = 999999999
+ScreenGui.Parent = (gethui and gethui()) or CoreGui or LocalPlayer:WaitForChild("PlayerGui")
 
--- === BOTÓN PRINCIPAL MOVIBLE ===
-local button = Instance.new("TextButton")
-button.Size = UDim2.new(0, 150, 0, 45)
-button.Position = UDim2.new(0.5, -75, 0.1, 0)
-button.Text = "cámara activar"
-button.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-button.TextColor3 = Color3.fromRGB(255, 255, 255)
-button.Font = Enum.Font.Code
-button.TextSize = 16
-button.BorderSizePixel = 0
-button.Parent = screenGui
+local Frame = Instance.new("Frame")
+Frame.Size = UDim2.new(0, 320, 0, 420)
+Frame.Position = UDim2.new(0.5, -160, 0.2, 0)
+Frame.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+Frame.BackgroundTransparency = 0.25
+Frame.ClipsDescendants = true
+Frame.Active = true
+Frame.Draggable = true
+Frame.ZIndex = 100
+Frame.Parent = ScreenGui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = button
+local UICorner = Instance.new("UICorner", Frame)
+UICorner.CornerRadius = UDim.new(0, 10)
 
--- === BOTONES TÁCTILES PARA SUBIR Y BAJAR (MÓVIL) ===
-local function createVerticalButton(text, posOffset)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 50, 0, 50)
-    btn.Position = UDim2.new(1, -70, 0.5, posOffset)
-    btn.Text = text
-    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
-    btn.BackgroundTransparency = 0.3
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.Font = Enum.Font.Code
-    btn.TextSize = 24
-    btn.Visible = false
-    btn.Parent = screenGui
-    
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 8)
-    btnCorner.Parent = btn
-    
-    return btn
+local UIStroke = Instance.new("UIStroke")
+UIStroke.Color = Color3.fromRGB(0, 150, 255)
+UIStroke.Thickness = 2
+UIStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+UIStroke.Parent = Frame
+
+local ParticlesFrame = Instance.new("Frame")
+ParticlesFrame.Size = UDim2.new(1, 0, 1, 0)
+ParticlesFrame.BackgroundTransparency = 1
+ParticlesFrame.ZIndex = 101
+ParticlesFrame.Parent = Frame
+
+local particulas = {}
+for i = 1, 20 do
+	local p = Instance.new("Frame")
+	p.Size = UDim2.new(0, math.random(2, 4), 0, math.random(2, 4))
+	p.Position = UDim2.new(math.random(), 0, math.random(), 0)
+	p.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+	p.BackgroundTransparency = math.random(3, 7) / 10
+	p.BorderSizePixel = 0
+	p.ZIndex = 101
+	p.Parent = ParticlesFrame
+	
+	table.insert(particulas, {
+		Frame = p,
+		Velocidad = math.random(15, 40) / 10000
+	})
 end
 
-local upButton = createVerticalButton("▲", -60)
-local downButton = createVerticalButton("▼", 10)
-
--- === SISTEMA DE ARRASTRE PARA EL BOTÓN PRINCIPAL ===
-local dragging, dragInput, dragStart, startPos
-
-button.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = button.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
+RunService.RenderStepped:Connect(function()
+	for _, pData in ipairs(particulas) do
+		local pos = pData.Frame.Position
+		local newY = pos.Y.Scale + pData.Velocidad
+		if newY > 1 then newY = -0.02 end
+		pData.Frame.Position = UDim2.new(pos.X.Scale, 0, newY, 0)
+	end
 end)
 
-button.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-        dragInput = input
-    end
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -20, 0, 30)
+Title.Position = UDim2.new(0, 10, 0, 5)
+Title.BackgroundTransparency = 1
+Title.Text = "🌐 Chat Traducido"
+Title.TextColor3 = Color3.fromRGB(0, 200, 255)
+Title.TextSize = 15
+Title.Font = Enum.Font.SourceSansBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.ZIndex = 102
+Title.Parent = Frame
+
+local Scroll = Instance.new("ScrollingFrame")
+Scroll.Size = UDim2.new(1, -16, 1, -180)
+Scroll.Position = UDim2.new(0, 8, 0, 38)
+Scroll.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+Scroll.BackgroundTransparency = 0.5
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+Scroll.ScrollBarThickness = 4
+Scroll.ZIndex = 102
+Scroll.Parent = Frame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Parent = Scroll
+UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayout.Padding = UDim.new(0, 4)
+
+UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	Scroll.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y)
+	Scroll.CanvasPosition = Vector2.new(0, UIListLayout.AbsoluteContentSize.Y)
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
-        button.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-
--- === LÓGICA DE MOVIMIENTO VERTICAL (BOTONES) ===
-local verticalMove = 0
-
-local function bindVerticalButton(btn, directionValue)
-    btn.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            verticalMove = directionValue
-        end
-    end)
-    btn.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            verticalMove = 0
-        end
-    end)
+local function AgregarMensajeAGUI(autor, texto)
+	local Label = Instance.new("TextLabel")
+	Label.Size = UDim2.new(1, -8, 0, 0)
+	Label.AutomaticSize = Enum.AutomaticSize.Y
+	Label.BackgroundTransparency = 1
+	Label.Text = " <b>" .. autor .. ":</b> " .. texto
+	Label.RichText = true
+	Label.TextColor3 = Color3.fromRGB(240, 240, 240)
+	Label.TextSize = 13
+	Label.Font = Enum.Font.SourceSans
+	Label.TextWrapped = true
+	Label.TextXAlignment = Enum.TextXAlignment.Left
+	Label.ZIndex = 103
+	Label.Parent = Scroll
 end
 
-bindVerticalButton(upButton, 1)   -- Sube la cámara
-bindVerticalButton(downButton, -1) -- Baja la cámara
+AgregarMensajeAGUI("Sistema", "Conectado a MyMemory API. Escribe abajo.")
 
--- === LÓGICA DE LA CÁMARA LIBRE ===
-local isFreecam = false
-local speed = 50
-local connection
-local freecamPart
-local originalMinZoom, originalMaxZoom
+local SelectorBtn = Instance.new("TextButton")
+SelectorBtn.Size = UDim2.new(0, 100, 0, 25)
+SelectorBtn.Position = UDim2.new(0, 8, 1, -135)
+SelectorBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 180)
+SelectorBtn.Text = "Idioma: Inglés"
+SelectorBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SelectorBtn.TextSize = 11
+SelectorBtn.Font = Enum.Font.SourceSansBold
+SelectorBtn.ZIndex = 102
+SelectorBtn.Parent = Frame
 
-button.MouseButton1Click:Connect(function()
-    isFreecam = not isFreecam
-    local character = player.Character
-    local hrp = character and character:FindFirstChild("HumanoidRootPart")
+local DropdownFrame = Instance.new("Frame")
+DropdownFrame.Size = UDim2.new(0, 100, 0, 120)
+DropdownFrame.Position = UDim2.new(0, 8, 1, -260)
+DropdownFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+DropdownFrame.Visible = false
+DropdownFrame.ZIndex = 200
+DropdownFrame.Parent = Frame
 
-    if isFreecam then
-        button.Text = "cámara desactivar"
-        button.BackgroundColor3 = Color3.fromRGB(150, 40, 40)
-        upButton.Visible = true
-        downButton.Visible = true
-        
-        if hrp then hrp.Anchored = true end
-        
-        freecamPart = Instance.new("Part")
-        freecamPart.Size = Vector3.new(1, 1, 1)
-        freecamPart.Transparency = 1
-        freecamPart.CanCollide = false
-        freecamPart.Anchored = true
-        freecamPart.CFrame = camera.CFrame
-        freecamPart.Parent = Workspace
-        
-        originalMinZoom = player.CameraMinZoomDistance
-        originalMaxZoom = player.CameraMaxZoomDistance
-        player.CameraMinZoomDistance = 0.5
-        player.CameraMaxZoomDistance = 0.5
-        
-        camera.CameraSubject = freecamPart
-        
-        connection = RunService.RenderStepped:Connect(function(dt)
-            local joyVector = Controls:GetMoveVector()
-            local cf = camera.CFrame
-            local moveOffset = (cf.RightVector * joyVector.X) + (cf.LookVector * -joyVector.Z) + (cf.UpVector * verticalMove)
-            
-            if moveOffset.Magnitude > 0 then
-                moveOffset = moveOffset.Unit
-            end
-            
-            freecamPart.CFrame = freecamPart.CFrame + (moveOffset * speed * dt)
-        end)
-    else
-        button.Text = "cámara activar"
-        button.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-        upButton.Visible = false
-        downButton.Visible = false
-        verticalMove = 0
-        
-        if hrp then hrp.Anchored = false end
-        if connection then connection:Disconnect() end
-        if freecamPart then freecamPart:Destroy() end
-        
-        if originalMinZoom and originalMaxZoom then
-            player.CameraMinZoomDistance = originalMinZoom
-            player.CameraMaxZoomDistance = originalMaxZoom
-        end
-        camera.CameraSubject = character and character:FindFirstChild("Humanoid")
-    end
-end)
+local DropdownLayout = Instance.new("UIListLayout", DropdownFrame)
+DropdownLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
--- ============================================================
--- PRIMERA ETAPA: Cargador del Chat Traductor
--- ============================================================
-task.spawn(function()
-	local Players = game:GetService("Players")
-	local HttpService = game:GetService("HttpService")
-	local TextChatService = game:GetService("TextChatService")
-	local CoreGui = game:GetService("CoreGui")
-	local RunService = game:GetService("RunService")
-	local LocalPlayer = Players.LocalPlayer
+local SendBtn = Instance.new("TextButton")
+SendBtn.Size = UDim2.new(0, 196, 0, 25)
+SendBtn.Position = UDim2.new(0, 116, 1, -135)
+SendBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+SendBtn.Text = "Enviar Mensaje Traducido"
+SendBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+SendBtn.TextSize = 12
+SendBtn.Font = Enum.Font.SourceSansBold
+SendBtn.ZIndex = 102
+SendBtn.Parent = Frame
 
-	local Idiomas = {
-		["Francés"] = "fr",
-		["Inglés"] = "en",
-		["Español"] = "es",
-		["Brasil"] = "pt",
-		["Portugal"] = "pt",
-		["China"] = "zh"
-	}
+local SendCorner = Instance.new("UICorner", SendBtn)
+SendCorner.CornerRadius = UDim.new(0, 5)
 
-	local idiomaSeleccionado = "en"
+local PreviewLabel = Instance.new("TextLabel")
+PreviewLabel.Size = UDim2.new(1, -16, 0, 55)
+PreviewLabel.Position = UDim2.new(0, 8, 1, -102)
+PreviewLabel.BackgroundColor3 = Color3.fromRGB(10, 10, 15)
+PreviewLabel.BackgroundTransparency = 0.3
+PreviewLabel.Text = " <i>Vista previa traducida...</i>"
+PreviewLabel.RichText = true
+PreviewLabel.TextColor3 = Color3.fromRGB(0, 220, 255)
+PreviewLabel.TextSize = 13
+PreviewLabel.Font = Enum.Font.SourceSans
+PreviewLabel.TextWrapped = true
+PreviewLabel.TextYAlignment = Enum.TextYAlignment.Top
+PreviewLabel.TextXAlignment = Enum.TextXAlignment.Left
+PreviewLabel.ZIndex = 102
+PreviewLabel.Parent = Frame
 
-	local function traducirTexto(texto, origen, destino)
-		if not texto or #texto:gsub("%s+", "") == 0 then return "" end
-		local url = "https://api.mymemory.translated.net/get?q=" .. HttpService:UrlEncode(texto) .. "&langpair=" .. origen .. "|" .. destino
-		
-		local exito, respuesta = pcall(function() return game:HttpGet(url) end)
-		if exito and respuesta then
-			local exitoJSON, datos = pcall(function() return HttpService:JSONDecode(respuesta) end)
-			if exitoJSON and datos and datos.responseData and datos.responseData.translatedText then
-				return datos.responseData.translatedText
+local PreviewCorner = Instance.new("UICorner", PreviewLabel)
+PreviewCorner.CornerRadius = UDim.new(0, 5)
+
+local TextBox = Instance.new("TextBox")
+TextBox.Size = UDim2.new(1, -16, 0, 32)
+TextBox.Position = UDim2.new(0, 8, 1, -40)
+TextBox.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+TextBox.PlaceholderText = "Escribe aquí en español..."
+TextBox.Text = ""
+TextBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+TextBox.TextSize = 13
+TextBox.Font = Enum.Font.SourceSans
+TextBox.ZIndex = 102
+TextBox.Parent = Frame
+
+local TextCorner = Instance.new("UICorner", TextBox)
+TextCorner.CornerRadius = UDim.new(0, 5)
+
+local ultimoTextoTraducido = ""
+local contadorPeticion = 0
+
+local function ProcesarTraduccion()
+	local textoOriginal = TextBox.Text
+	if #textoOriginal:gsub("%s+", "") == 0 then
+		ultimoTextoTraducido = ""
+		PreviewLabel.Text = " <i>Vista previa traducida...</i>"
+		return
+	end
+
+	contadorPeticion = contadorPeticion + 1
+	local miId = contadorPeticion
+
+	task.spawn(function()
+		task.wait(0.25)
+		if miId == contadorPeticion then
+			PreviewLabel.Text = " <i>Traduciendo...</i>"
+			local resultado = traducirTexto(textoOriginal, "es", idiomaSeleccionado)
+			if miId == contadorPeticion then
+				ultimoTextoTraducido = resultado
+				PreviewLabel.Text = " " .. resultado
 			end
 		end
-		return texto
-	end
+	end)
+end
 
-	if CoreGui:FindFirstChild("TraductorChatGUI") then
-		CoreGui.TraductorChatGUI:Destroy()
-	end
+for nombreIdioma, codigo in pairs(Idiomas) do
+	local ItemBtn = Instance.new("TextButton")
+	ItemBtn.Size = UDim2.new(1, 0, 0, 20)
+	ItemBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+	ItemBtn.Text = nombreIdioma
+	ItemBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	ItemBtn.TextSize = 11
+	ItemBtn.ZIndex = 201
+	ItemBtn.Parent = DropdownFrame
+	
+	ItemBtn.MouseButton1Click:Connect(function()
+		idiomaSeleccionado = codigo
+		SelectorBtn.Text = "Idioma: " .. nombreIdioma
+		DropdownFrame.Visible = false
+		ProcesarTraduccion()
+	end)
+end
 
-	local ScreenGui = Instance.new("ScreenGui")
-	ScreenGui.Name = "TraductorChatGUI"
-	ScreenGui.DisplayOrder = 999999999
-	ScreenGui.Parent = (gethui and gethui()) or CoreGui or LocalPlayer:WaitForChild("PlayerGui")
+SelectorBtn.MouseButton1Click:Connect(function()
+	DropdownFrame.Visible = not DropdownFrame.Visible
+end)
 
-	local Frame = Instance.new("Frame")
-	Frame.Size = UDim2.new(0, 320, 0, 420)
-	Frame.Position = UDim2.new(0.5, -160, 0.2, 0)
-	Frame.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
-	Frame.BackgroundTransparency = 0.25
-	Frame.ClipsDescendants = true
-	Frame.Active = true
-	Frame.Draggable = true
-	Frame.ZIndex = 100
-	Frame.Parent = ScreenGui
+TextBox:GetPropertyChangedSignal("Text"):Connect(ProcesarTraduccion)
 
-	local UICorner = Instance.new("UICorner", Frame)
-	UICorner.CornerRadius = UDim.new(0, 10)
-
-	local UIStroke = Instance.new("UIStroke")
-	UIStroke.Color = Color3.fromRGB(0, 150, 255)
-	UIStroke.Thickness = 2
-	UIStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-	UIStroke.Parent = Frame
-
-	local ParticlesFrame = Instance.new("Frame")
-	ParticlesFrame.Size = UDim2.new(1, 0, 1, 0)
-	ParticlesFrame.BackgroundTransparency = 1
-	ParticlesFrame.ZIndex = 101
-	ParticlesFrame.Parent = Frame
-
-	local particulas = {}
-	for i = 1, 20 do
-		local p = Instance.new("Frame")
-		p.Size = UDim2.new(0, math.random(2, 4), 0, math.random(2, 4))
-		p.Position = UDim2.new(math.random(), 0, math.random(), 0)
-		p.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-		p.BackgroundTransparency = math.random(3, 7) / 10
-		p.BorderSizePixel = 0
-		p.ZIndex = 101
-		p.Parent = ParticlesFrame
+local function EnviarMensaje()
+	if #ultimoTextoTraducido > 0 then
+		local mensajeFinal = ultimoTextoTraducido
+		TextBox.Text = ""
+		ultimoTextoTraducido = ""
+		PreviewLabel.Text = " <i>Vista previa traducida...</i>"
 		
-		table.insert(particulas, {Frame = p, Velocidad = math.random(15, 40) / 10000})
+		task.spawn(function()
+			local chatEvents = game:GetService("ReplicatedStorage"):FindFirstChild("DefaultChatSystemChatEvents")
+			if chatEvents and chatEvents:FindFirstChild("SayMessageRequest") then
+				chatEvents.SayMessageRequest:FireServer(mensajeFinal, "All")
+			else
+				local textChannels = TextChatService:FindFirstChild("TextChannels")
+				if textChannels me then
+					local general = textChannels:FindFirstChild("RBXGeneral") or textChannels:FindFirstChildOfClass("TextChannel")
+					if general then
+						general:SendAsync(mensajeFinal)
+					end
+				end
+			end
+		end)
 	end
+end
 
-	RunService.RenderStepped:Connect(function()
-		for _, pData in ipairs(particulas) do
-			local pos = pData.Frame.Position
-			local newY = pos.Y.Scale + pData.Velocidad
-			if newY > 1 then newY = -0.02 end
-			pData.Frame.Position = UDim2.new(pos.X.Scale, 0, newY, 0)
+SendBtn.MouseButton1Click:Connect(EnviarMensaje)
+TextBox.FocusLost:Connect(function(enterPressed)
+	if enterPressed then
+		EnviarMensaje()
+	end
+end)
+
+local function ConectarJugador(player)
+	player.Chatted:Connect(function(msg)
+		if player ~= LocalPlayer then
+			task.spawn(function()
+				local trad = traducirTexto(msg, "autodetect", "es")
+				AgregarMensajeAGUI(player.DisplayName or player.Name, trad)
+			end)
 		end
 	end)
+end
 
-	local Title = Instance.new("TextLabel")
-	Title.Size = UDim2.new(1, -20, 0, 30)
-	Title.Position = UDim2.new(0, 10, 0, 5)
-	Title.BackgroundTransparency = 1
-	Title.Text = "🌐 Chat Traducido"
-	Title.TextColor3 = Color3.fromRGB(0, 200, 255)
-	Title.TextSize = 15
-	Title.Font = Enum.Font.SourceSansBold
-	Title.TextXAlignment = Enum.TextXAlignment.Left
-	Title.ZIndex = 102
-	Title.Parent = Frame
-
-	local Scroll = Instance.new("ScrollingFrame")
-	Scroll.Size = UDim2.new(1, -16, 1, -180)
-	Scroll.Position = UDim2.new(0, 8, 0, 38)
-	Scroll.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	Scroll.BackgroundTransparency = 0.5
-	Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-	Scroll.ScrollBarThickness = 4
-	Scroll.ZIndex = 102
-	Scroll.Parent = Frame
-
-	local UIListLayout = Instance.new("UIListLayout")
-	UIListLayout.Parent = Scroll
-	UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	UIListLayout.Padding = UDim.new(0, 4)
-
-	UIListLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-		Scroll.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y)
-		Scroll.CanvasPosition = Vector2.new(0, UIListLayout.AbsoluteContentSize.Y)
-	end)
-
-	local function AgregarMensajeAGUI(autor, texto)
-		local Label = Instance.new("TextLabel")
-		Label.Size = UDim2.new(1, -8, 0, 0)
-		Label.AutomaticSize = Enum.AutomaticSize.Y
-		Label.BackgroundTransparency = 1
-		Label.Text = " <b>" .. autor .. ":</b> " .. texto
-		Label.RichText = true
-		Label.TextColor3 = Color3.fromRGB(240, 240, 240)
-		Label.TextSize = 13
-		Label.Font = Enum.Font.SourceSans
-		Label.TextWrapped = true
-		Label.TextXAlignment = Enum.TextXAlignment.Left
-		Label.ZIndex = 103
-		Label.Parent = Scroll
-	end
-
-	AgregarMensajeAGUI("Sistema", "Conectado a MyMemory API. Escribe abajo.")
-
-	local SelectorBtn = Instance.new("TextButton")
-	SelectorBtn.Size = UDim2.new(0, 100, 0, 25)
-	SelectorBtn.Position = UDim2.new(0, 8, 1, -135)
-	SelectorBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 180)
-	SelectorBtn.Text = "Idioma: Inglés"
-	SelectorBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-	SelectorBtn.TextSize = 11
-	SelectorBtn.Font = Enum.Font.SourceSansBold
-	SelectorBtn.ZIndex = 102
-	SelectorBtn.Parent = Frame
-
-	local DropdownFrame = Instance.new("Frame")
-	DropdownFrame.Size = UDim2.new(0, 100,
+for _, p in ipairs(Players:GetPlayers()) do
+	ConectarJugador(p)
+end
+Players.PlayerAdded:Connect(ConectarJugador)
